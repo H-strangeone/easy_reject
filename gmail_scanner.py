@@ -951,31 +951,66 @@ def get_email_body(payload):
 #  MAIN SCAN FUNCTION
 # ──────────────────────────────────────────────────────────────────────────────
 
-def scan_account(account_email, credentials_path, days_back=7, progress_callback=None):
+def scan_account(account_email, credentials_path, days_back=7,
+                 progress_callback=None, scan_mode="applied",
+                 scan_filter="all", stop_flag=None):
     """
     Scan one Gmail account.
+    scan_mode:   "all" | "applied"  — "applied" skips newsletters/job boards
+    scan_filter: "all" | "application_sent" | "rejected" | "interview" |
+                 "oa" | "offer" | "opportunity"
+    stop_flag:   callable returning True when user wants to stop
     Returns (new_applications, updates_found).
     """
     if not GOOGLE_LIBS_AVAILABLE:
         raise ImportError("Google libraries not installed.")
 
+    # ── Senders/domains to always skip ───────────────────────────────────
+    SKIP_SENDERS = {
+        "unstop", "unstop.com", "dare2compete",
+        "naukri", "naukrinewsletter", "shine", "monster",
+        "foundit", "timesjobs", "freshersworld",
+    }
+
+    # ── Keywords that mean "job posting / newsletter" not an application ──
+    JOB_OPPORTUNITY_SUBJECTS = [
+        "is hiring", "is looking for", "new job", "new jobs",
+        "jobs matching", "new jobs match", "job alert", "job alerts",
+        "hiring now", "open positions", "open roles", "job openings",
+        "recommended jobs", "jobs you might like", "job recommendations",
+        "jobs for you", "top jobs", "weekly jobs", "daily jobs",
+        "career opportunities", "job opportunity", "job opportunities",
+    ]
+
     creds = get_credentials(account_email, credentials_path)
     service = build("gmail", "v1", credentials=creds)
 
     new_apps = 0
-    updates = 0
+    updates  = 0
     emails_scanned = 0
     seen_msg_ids = set()
 
     after_date = (datetime.now() - timedelta(days=days_back)).strftime("%Y/%m/%d")
 
-    search_queries = [
-        f"subject:(application OR applied OR interview OR assessment OR offer OR rejected OR hiring OR recruiter OR referral OR referred OR test OR challenge OR \"thank you\") after:{after_date}",
-        f"from:(noreply OR no-reply OR careers OR jobs OR recruiting OR hr OR talent OR assessment OR test) after:{after_date}",
-        f"(hackerrank OR codility OR hirevue OR mettl OR codesignal OR testgorilla OR coderbyte) after:{after_date}",
-        f"(\"your cv was sent\" OR \"your application was sent\" OR \"thank you for your interest\" OR \"we will review your application\" OR \"time to apply\" OR \"thank you for applying\" OR \"thank you for your application\") after:{after_date}",
-        f"(\"proceed with other candidates\" OR \"moving forward with other\" OR \"unfortunately\" OR \"thank you for taking\" OR \"thank you for your time\") after:{after_date}",
-    ]
+    # ── Build search queries based on scan_mode ───────────────────────────
+    if scan_mode == "applied":
+        # Focused: only emails that look like responses to applications
+        search_queries = [
+            f"subject:(application OR applied OR interview OR assessment OR offer OR rejected OR \"thank you\") after:{after_date}",
+            f"from:(noreply OR no-reply OR careers OR jobs OR recruiting OR hr OR talent) after:{after_date}",
+            f"(hackerrank OR codility OR hirevue OR mettl OR codesignal OR testgorilla OR coderbyte) after:{after_date}",
+            f"(\"your cv was sent\" OR \"your application was sent\" OR \"thank you for your interest\" OR \"we will review your application\" OR \"thank you for applying\" OR \"thank you for your application\") after:{after_date}",
+            f"(\"proceed with other candidates\" OR \"moving forward with other\" OR \"unfortunately\" OR \"thank you for your time\") after:{after_date}",
+        ]
+    else:
+        # All: include job opportunity / newsletter emails too
+        search_queries = [
+            f"subject:(application OR applied OR interview OR assessment OR offer OR rejected OR hiring OR recruiter OR referral OR referred OR test OR challenge OR \"thank you\" OR \"is hiring\" OR \"job alert\" OR \"jobs matching\") after:{after_date}",
+            f"from:(noreply OR no-reply OR careers OR jobs OR recruiting OR hr OR talent OR assessment OR test OR opportunities) after:{after_date}",
+            f"(hackerrank OR codility OR hirevue OR mettl OR codesignal OR testgorilla OR coderbyte) after:{after_date}",
+            f"(\"your cv was sent\" OR \"your application was sent\" OR \"thank you for your interest\" OR \"we will review your application\" OR \"thank you for applying\") after:{after_date}",
+            f"(\"proceed with other candidates\" OR \"moving forward with other\" OR \"unfortunately\" OR \"is hiring\" OR \"new jobs match\") after:{after_date}",
+        ]
 
     for query in search_queries:
         try:
@@ -989,6 +1024,11 @@ def scan_account(account_email, credentials_path, days_back=7, progress_callback
 
         messages = results.get("messages", [])
         for msg_ref in messages:
+            # ── Stop flag ───────────────────────────────────────────────
+            if stop_flag and stop_flag():
+                db.log_scan(account_email, emails_scanned, new_apps, updates, "Stopped")
+                return new_apps, updates
+
             msg_id = msg_ref["id"]
             if msg_id in seen_msg_ids:
                 continue
@@ -1007,16 +1047,61 @@ def scan_account(account_email, credentials_path, days_back=7, progress_callback
 
             headers = {h["name"].lower(): h["value"]
                        for h in msg["payload"].get("headers", [])}
-            subject  = headers.get("subject", "")
-            sender   = headers.get("from", "")
+            subject   = headers.get("subject", "")
+            sender    = headers.get("from", "")
             thread_id = msg.get("threadId", "")
-            snippet  = msg.get("snippet", "")
+            snippet   = msg.get("snippet", "")
 
             body = get_email_body(msg["payload"])
 
             sender_email_m = re.search(r"<(.+?)>", sender)
             sender_email   = sender_email_m.group(1) if sender_email_m else sender
 
+            # ── Skip senders (Unstop, job boards, etc.) ─────────────────
+            sender_lower = sender.lower()
+            if any(skip in sender_lower for skip in SKIP_SENDERS):
+                if progress_callback:
+                    progress_callback(f"  ⏭ Skipped (blocked sender): {sender[:50]}")
+                continue
+
+            # ── Detect job opportunity emails ────────────────────────────
+            subject_lower = subject.lower()
+            combined_lower_check = (subject_lower + " " + body[:500].lower())
+            is_opportunity = any(kw in combined_lower_check
+                                 for kw in JOB_OPPORTUNITY_SUBJECTS)
+
+            if is_opportunity:
+                # Save as Job Opportunity category, don't classify further
+                existing_job_id = db.thread_id_exists(thread_id)
+                if not existing_job_id:
+                    company = extract_company_from_email(sender, subject, body)
+                    role    = extract_role_from_subject(subject)
+                    job_id  = db.add_job(
+                        company=company, role=role,
+                        gmail_account=account_email,
+                        applied_date=(datetime.fromtimestamp(
+                            int(msg.get("internalDate", 0)) / 1000
+                        ).strftime("%d-%m-%Y") if msg.get("internalDate") else
+                            datetime.now().strftime("%d-%m-%Y")),
+                        thread_id=thread_id,
+                        email_subject=subject,
+                    )
+                    db.update_job_status(job_id, status="Job Opportunity",
+                                         stage="Job Opportunity")
+                    db.add_email_event(
+                        job_id, event_type="opportunity",
+                        subject=subject, snippet=snippet[:400],
+                        message_id=msg_id,
+                        sender_full=sender, body_text=body[:8000],
+                    )
+                    new_apps += 1
+                    if progress_callback:
+                        progress_callback(f"  💡 Opportunity: {subject[:60]}")
+                # Skip further processing for this email
+                continue
+
+            # ── Apply scan_filter — skip emails not matching what user wants ──
+            # We'll classify first, then filter
             internal_date = int(msg.get("internalDate", 0)) / 1000
             email_date = (datetime.fromtimestamp(internal_date).strftime("%d-%m-%Y")
                           if internal_date else datetime.now().strftime("%d-%m-%Y"))
@@ -1057,6 +1142,13 @@ def scan_account(account_email, credentials_path, days_back=7, progress_callback
                     clf["raw_details"] = f"[AI] {llm['summary']}\n\n" + clf.get("raw_details", "")
                 if progress_callback and llm_cls != "unknown":
                     progress_callback(f"  → LLM: {llm_cls} | {llm.get('company','')}")
+
+            # ── scan_filter: skip emails that don't match what user asked for ──
+            if scan_filter != "all":
+                if scan_filter == "opportunity":
+                    continue   # opportunities already handled above
+                elif clf["type"] != scan_filter:
+                    continue   # doesn't match — skip
 
             # Serialise links for storage
             links_str = "\n".join(clf["all_links"][:10])

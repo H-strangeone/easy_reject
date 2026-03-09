@@ -33,22 +33,25 @@ C = {
 }
 
 STATUS_COLOR = {
-    "Applied":        C["accent"],
-    "In Progress":    C["green"],
-    "Rejected":       C["red"],
-    "Offer Received": C["yellow"],
-    "Withdrawn":      C["dim"],
-    "Referred":       C["purple"],
+    "Applied":           C["accent"],
+    "In Progress":       C["green"],
+    "Rejected":          C["red"],
+    "Offer Received":    C["yellow"],
+    "Withdrawn":         C["dim"],
+    "Referred":          C["purple"],
+    "Job Opportunity":   C["teal"],
 }
 
 STAGE_OPTIONS = [
-    "Applied", "Referred",
+    "Applied", "Applied - Waiting", "Referred",
     "OA Received", "OA Submitted", "OA Passed", "OA Failed",
     "Stage 1 - Interview", "Stage 2 - Interview", "Stage 2 - HR Interview",
     "Stage 3 - Final Interview",
     "Offer Received", "Rejected", "Withdrawn",
+    "Job Opportunity",
 ]
-STATUS_OPTIONS = ["Applied", "In Progress", "Rejected", "Offer Received", "Withdrawn"]
+STATUS_OPTIONS = ["Applied", "In Progress", "Rejected", "Offer Received",
+                  "Withdrawn", "Job Opportunity"]
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -439,6 +442,7 @@ class JobDetailWindow(tk.Toplevel):
             "rejected":         ("❌", C["red"]),
             "offer":            ("🎉", C["yellow"]),
             "accepted":         ("✅", C["green"]),
+            "opportunity":      ("💡", C["teal"]),
             "unknown":          ("📧", C["sub"]),
         }
 
@@ -1109,6 +1113,101 @@ class JobCard(tk.Frame):
 #  MAIN APP
 # ──────────────────────────────────────────────────────────────────────────────
 
+class ScanOptionsDialog(tk.Toplevel):
+    """Dialog shown before scanning — lets user pick mode, filter, and days."""
+
+    SCAN_MODES = [
+        ("All emails",              "all"),
+        ("Applied / Responses only","applied"),
+    ]
+    SCAN_FILTERS = [
+        ("Everything",              "all"),
+        ("Applied confirmations",   "application_sent"),
+        ("Rejections",              "rejected"),
+        ("Interviews",              "interview"),
+        ("OA / Assessments",        "oa"),
+        ("Offers",                  "offer"),
+        ("Job Opportunities",       "opportunity"),
+    ]
+
+    def __init__(self, parent, accounts, on_start):
+        super().__init__(parent)
+        self.title("Scan Options")
+        self.configure(bg=C["bg"])
+        self.geometry("420x420")
+        self.resizable(False, False)
+        self.grab_set()
+        self.on_start  = on_start
+        self.accounts  = accounts
+        self._build()
+
+    def _build(self):
+        tk.Label(self, text="🔍  Scan Options", font=("Segoe UI", 14, "bold"),
+                 bg=C["bg"], fg=C["text"]).pack(pady=(18, 4))
+        sep(self).pack(fill="x", padx=20)
+
+        f = tk.Frame(self, bg=C["bg"]); f.pack(fill="x", padx=24, pady=10)
+
+        # Days back
+        tk.Label(f, text="Scan how far back:", font=("Segoe UI", 9, "bold"),
+                 bg=C["bg"], fg=C["sub"]).grid(row=0, column=0, sticky="w", pady=6)
+        self.days_var = tk.StringVar(value=db.get_setting("days_back", "30"))
+        days_f = tk.Frame(f, bg=C["bg"]); days_f.grid(row=0, column=1, sticky="w", padx=8)
+        tk.Entry(days_f, textvariable=self.days_var, font=("Segoe UI", 9),
+                 bg=C["card2"], fg=C["text"], insertbackground=C["accent"],
+                 relief="flat", width=6).pack(side="left")
+        tk.Label(days_f, text=" days", font=("Segoe UI", 9),
+                 bg=C["bg"], fg=C["sub"]).pack(side="left")
+
+        sep(f, color=C["border"]).grid(row=1, column=0, columnspan=2, sticky="ew", pady=8)
+
+        # Scan mode
+        tk.Label(f, text="Scan mode:", font=("Segoe UI", 9, "bold"),
+                 bg=C["bg"], fg=C["sub"]).grid(row=2, column=0, sticky="nw", pady=4)
+        self.mode_var = tk.StringVar(value="applied")
+        mf = tk.Frame(f, bg=C["bg"]); mf.grid(row=2, column=1, sticky="w", padx=8)
+        for label, val in self.SCAN_MODES:
+            tk.Radiobutton(mf, text=label, variable=self.mode_var, value=val,
+                           font=("Segoe UI", 9), bg=C["bg"], fg=C["text"],
+                           selectcolor=C["card2"], activebackground=C["bg"],
+                           activeforeground=C["accent"]).pack(anchor="w")
+
+        tk.Label(f, text="  Applied only = faster, skips newsletters",
+                 font=("Segoe UI", 8), bg=C["bg"], fg=C["dim"]).grid(
+                 row=3, column=0, columnspan=2, sticky="w")
+
+        sep(f, color=C["border"]).grid(row=4, column=0, columnspan=2, sticky="ew", pady=8)
+
+        # What to look for
+        tk.Label(f, text="Look for:", font=("Segoe UI", 9, "bold"),
+                 bg=C["bg"], fg=C["sub"]).grid(row=5, column=0, sticky="nw", pady=4)
+        self.filter_var = tk.StringVar(value="all")
+        ff = tk.Frame(f, bg=C["bg"]); ff.grid(row=5, column=1, sticky="w", padx=8)
+        for label, val in self.SCAN_FILTERS:
+            tk.Radiobutton(ff, text=label, variable=self.filter_var, value=val,
+                           font=("Segoe UI", 9), bg=C["bg"], fg=C["text"],
+                           selectcolor=C["card2"], activebackground=C["bg"],
+                           activeforeground=C["accent"]).pack(anchor="w")
+
+        sep(self).pack(fill="x", padx=20, pady=8)
+
+        bf = tk.Frame(self, bg=C["bg"]); bf.pack(pady=4)
+        Btn(bf, "🔍 Start Scan", cmd=self._start,
+            bg=C["green"], w=140, h=32).pack(side="left", padx=6)
+        Btn(bf, "Cancel", cmd=self.destroy,
+            bg=C["card2"], fg=C["text"], w=90, h=32).pack(side="left", padx=6)
+
+    def _start(self):
+        try:
+            days = int(self.days_var.get())
+        except ValueError:
+            days = 30
+        creds = db.get_setting("credentials_path", "")
+        self.destroy()
+        self.on_start(self.accounts, creds, days,
+                      self.mode_var.get(), self.filter_var.get())
+
+
 class JobTrackerApp(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -1173,11 +1272,12 @@ class JobTrackerApp(tk.Tk):
         self.filter_var = tk.StringVar(value="All")
         self._nav_btns = []
         filters = [
-            ("All",          "All"),
-            ("Applied",      "Applied"),
-            ("In Progress",  "In Progress"),
-            ("Rejected",     "Rejected"),
-            ("Offer",        "Offer Received"),
+            ("All",                "All"),
+            ("Applied",            "Applied"),
+            ("In Progress",        "In Progress"),
+            ("Rejected",           "Rejected"),
+            ("Offer",              "Offer Received"),
+            ("💡 Opportunities",   "Job Opportunity"),
         ]
         for label, val in filters:
             b = tk.Label(nav, text=f"   {label}", font=("Segoe UI", 10),
@@ -1196,8 +1296,12 @@ class JobTrackerApp(tk.Tk):
         ab.pack(fill="x")
         Btn(ab, "➕  Add Job",       cmd=self._add_job,
             bg=C["accent"],  w=186, h=30).pack(pady=3)
-        Btn(ab, "🔍  Scan Gmail",    cmd=self._scan,
-            bg=C["green"],   w=186, h=30).pack(pady=3)
+        self._scan_btn_ref = Btn(ab, "🔍  Scan Gmail",    cmd=self._scan,
+            bg=C["green"],   w=186, h=30)
+        self._scan_btn_ref.pack(pady=3)
+        self._stop_btn_ref = Btn(ab, "⏹  Stop Scan",     cmd=self._stop_scan,
+            bg=C["red"],     w=186, h=30)
+        # stop button hidden until scan starts
         Btn(ab, "⚙  Settings",      cmd=self._settings,
             bg=C["card2"], fg=C["text"], w=186, h=30).pack(pady=3)
 
@@ -1287,11 +1391,12 @@ class JobTrackerApp(tk.Tk):
         tk.Label(self.stats_frame, text="Overview", font=("Segoe UI", 8, "bold"),
                  bg=C["card"], fg=C["dim"]).pack(anchor="w")
         items = [
-            ("Total",       stats.get("total", 0),          C["text"]),
-            ("Applied",     stats.get("Applied", 0),        C["accent"]),
-            ("In Progress", stats.get("In Progress", 0),    C["green"]),
-            ("Rejected",    stats.get("Rejected", 0),       C["red"]),
-            ("Offer",       stats.get("Offer Received", 0), C["yellow"]),
+            ("Total",           stats.get("total", 0),                 C["text"]),
+            ("Applied",         stats.get("Applied", 0),               C["accent"]),
+            ("In Progress",     stats.get("In Progress", 0),           C["green"]),
+            ("Rejected",        stats.get("Rejected", 0),              C["red"]),
+            ("Offer",           stats.get("Offer Received", 0),        C["yellow"]),
+            ("💡 Opportunities", stats.get("Job Opportunity", 0),      C["teal"]),
         ]
         for label, count, color in items:
             r = tk.Frame(self.stats_frame, bg=C["card"]); r.pack(fill="x", pady=1)
@@ -1316,7 +1421,7 @@ class JobTrackerApp(tk.Tk):
                         fg=C["bg"] if v == val else C["sub"])
         title_map = {"All": "All Applications", "Applied": "Applied",
                      "In Progress": "In Progress", "Rejected": "Rejected",
-                     "Offer Received": "Offers 🎉"}
+                     "Offer Received": "Offers 🎉", "Job Opportunity": "💡 Job Opportunities"}
         self.title_lbl.configure(text=title_map.get(val, val))
         self._load_jobs()
 
@@ -1384,6 +1489,11 @@ class JobTrackerApp(tk.Tk):
 
     # ── Scanning ──────────────────────────────────────────────────────────
 
+    def _stop_scan(self):
+        """Signal the running scan to stop after the current email."""
+        self._scan_stop_flag = True
+        self.prog_var.set("⏹ Stopping… finishing current email…")
+
     def _scan(self):
         creds = db.get_setting("credentials_path", "")
         raw   = db.get_setting("gmail_accounts", "")
@@ -1398,17 +1508,26 @@ class JobTrackerApp(tk.Tk):
                 "Add at least one Gmail address in ⚙ Settings.")
             return
 
-        threading.Thread(target=self._scan_worker,
-                         args=(accounts, creds), daemon=True).start()
+        ScanOptionsDialog(self, accounts, on_start=self._start_scan)
 
-    def _scan_worker(self, accounts, creds_path):
+    def _start_scan(self, accounts, creds_path, days_back, scan_mode, scan_filter):
+        """Called by ScanOptionsDialog when user clicks Scan."""
+        self._scan_stop_flag = False
+        self._scan_btn_ref.pack_forget()
+        self._stop_btn_ref.pack(pady=3)
+        threading.Thread(
+            target=self._scan_worker,
+            args=(accounts, creds_path, days_back, scan_mode, scan_filter),
+            daemon=True
+        ).start()
+
+    def _scan_worker(self, accounts, creds_path, days_back, scan_mode, scan_filter):
         try:
             import gmail_scanner
         except ImportError:
             self.after(0, self._show_install_dialog)
             return
 
-        days_back = int(db.get_setting("days_back", "7"))
         total_new = total_upd = 0
 
         for acct in accounts:
@@ -1416,7 +1535,12 @@ class JobTrackerApp(tk.Tk):
             try:
                 def cb(msg):
                     self.after(0, lambda m=msg: self.prog_var.set(m))
-                n, u = gmail_scanner.scan_account(acct, creds_path, days_back, cb)
+                n, u = gmail_scanner.scan_account(
+                    acct, creds_path, days_back, cb,
+                    scan_mode=scan_mode,
+                    scan_filter=scan_filter,
+                    stop_flag=lambda: self._scan_stop_flag,
+                )
                 total_new += n; total_upd += u
             except ImportError:
                 self.after(0, self._show_install_dialog)
@@ -1425,12 +1549,20 @@ class JobTrackerApp(tk.Tk):
                 self.after(0, lambda err=str(e), a=acct: messagebox.showerror(
                     "Scan Error", f"Error scanning {a}:\n{err}"))
 
+            if self._scan_stop_flag:
+                break
+
+        stopped = self._scan_stop_flag
         now = datetime.now().strftime("%d-%m-%Y %H:%M")
         db.set_setting("last_scan_time", now)
+        suffix = " (stopped early)" if stopped else ""
         self.after(0, lambda: self.scan_lbl.configure(text=f"Last scan: {now}"))
         self.after(0, lambda: self.prog_var.set(
-            f"✅ Done — {total_new} new, {total_upd} updates ({now})"))
+            f"{'⏹' if stopped else '✅'} Done{suffix} — {total_new} new, {total_upd} updates"))
         self.after(0, self._load_jobs)
+        # Restore scan button
+        self.after(0, self._stop_btn_ref.pack_forget)
+        self.after(0, lambda: self._scan_btn_ref.pack(pady=3))
 
     def _show_install_dialog(self):
         """Clear dialog when Google libraries are missing, with one-click auto-install."""
