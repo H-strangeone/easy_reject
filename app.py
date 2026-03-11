@@ -232,6 +232,67 @@ class JobDetailWindow(tk.Toplevel):
         else:
             self._row(tab, "Job / Mail URL", "—")
 
+        # ── OA / Assessment quick-access ─────────────────────────────────
+        if job.get("oa_link") or job.get("oa_platform") or job.get("oa_deadline"):
+            self._section(tab, "🧪 Assessment")
+            oa_f = tk.Frame(tab, bg=C["card2"], padx=14, pady=10)
+            oa_f.pack(fill="x", padx=20, pady=(0, 6))
+            if job.get("oa_platform"):
+                pf = tk.Frame(oa_f, bg=C["card2"]); pf.pack(fill="x", pady=(0, 4))
+                tk.Label(pf, text="Platform:", font=("Segoe UI", 9, "bold"),
+                         bg=C["card2"], fg=C["sub"], width=12, anchor="w").pack(side="left")
+                tk.Label(pf, text=job["oa_platform"], font=("Segoe UI", 9, "bold"),
+                         bg=C["card2"], fg=C["teal"]).pack(side="left")
+            if job.get("oa_deadline"):
+                df = tk.Frame(oa_f, bg=C["card2"]); df.pack(fill="x", pady=(0, 4))
+                tk.Label(df, text="Deadline:", font=("Segoe UI", 9, "bold"),
+                         bg=C["card2"], fg=C["sub"], width=12, anchor="w").pack(side="left")
+                tk.Label(df, text=job["oa_deadline"], font=("Segoe UI", 9),
+                         bg=C["card2"], fg=C["yellow"]).pack(side="left")
+            if job.get("oa_duration"):
+                dur_f = tk.Frame(oa_f, bg=C["card2"]); dur_f.pack(fill="x", pady=(0, 4))
+                tk.Label(dur_f, text="Duration:", font=("Segoe UI", 9, "bold"),
+                         bg=C["card2"], fg=C["sub"], width=12, anchor="w").pack(side="left")
+                tk.Label(dur_f, text=job["oa_duration"], font=("Segoe UI", 9),
+                         bg=C["card2"], fg=C["text"]).pack(side="left")
+            if job.get("oa_link"):
+                btn_f = tk.Frame(oa_f, bg=C["card2"]); btn_f.pack(fill="x", pady=(4, 0))
+                url = job["oa_link"]
+                open_btn = tk.Label(btn_f, text="🔗  Open Assessment Link",
+                                    font=("Segoe UI", 9, "bold"),
+                                    bg=C["accent"], fg=C["bg"],
+                                    padx=12, pady=6, cursor="hand2")
+                open_btn.pack(side="left")
+                open_btn.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
+                # Show URL as smaller text next to button
+                tk.Label(btn_f, text=f"  {url[:60]}{'…' if len(url)>60 else ''}",
+                         font=("Segoe UI", 8), bg=C["card2"],
+                         fg=C["dim"]).pack(side="left")
+
+        # ── Interview quick-access ────────────────────────────────────────
+        if job.get("interview_link") or job.get("interview_date"):
+            self._section(tab, "🎤 Interview")
+            iv_f = tk.Frame(tab, bg=C["card2"], padx=14, pady=10)
+            iv_f.pack(fill="x", padx=20, pady=(0, 6))
+            if job.get("interview_date"):
+                idf = tk.Frame(iv_f, bg=C["card2"]); idf.pack(fill="x", pady=(0, 4))
+                tk.Label(idf, text="Date/Time:", font=("Segoe UI", 9, "bold"),
+                         bg=C["card2"], fg=C["sub"], width=12, anchor="w").pack(side="left")
+                tk.Label(idf, text=job["interview_date"], font=("Segoe UI", 9),
+                         bg=C["card2"], fg=C["yellow"]).pack(side="left")
+            if job.get("interview_link"):
+                url = job["interview_link"]
+                ibf = tk.Frame(iv_f, bg=C["card2"]); ibf.pack(fill="x", pady=(4, 0))
+                open_btn2 = tk.Label(ibf, text="🔗  Join Interview",
+                                     font=("Segoe UI", 9, "bold"),
+                                     bg=C["green"], fg=C["bg"],
+                                     padx=12, pady=6, cursor="hand2")
+                open_btn2.pack(side="left")
+                open_btn2.bind("<Button-1>", lambda e, u=url: webbrowser.open(u))
+                tk.Label(ibf, text=f"  {url[:60]}{'…' if len(url)>60 else ''}",
+                         font=("Segoe UI", 8), bg=C["card2"],
+                         fg=C["dim"]).pack(side="left")
+
         if job.get("important_dates"):
             self._section(tab, "Important Dates")
             for d in job["important_dates"].split(","):
@@ -252,14 +313,19 @@ class JobDetailWindow(tk.Toplevel):
         f = tk.Frame(tab, bg=C["bg"]); f.pack(fill="x", padx=20, pady=4)
         tk.Label(f, text="Status:", font=("Segoe UI", 9, "bold"),
                  bg=C["bg"], fg=C["sub"]).pack(side="left")
-        self.status_var = tk.StringVar(value=job["status"])
-        ttk.Combobox(f, textvariable=self.status_var, values=STATUS_OPTIONS,
-                     width=18, font=("Segoe UI", 9), state="readonly").pack(side="left", padx=8)
+        self.status_var = tk.StringVar(value=job.get("status", "Applied"))
+        _s_cb = ttk.Combobox(f, textvariable=self.status_var, values=STATUS_OPTIONS,
+                     width=18, font=("Segoe UI", 9), state="readonly")
+        _s_cb.pack(side="left", padx=8)
+        _s_cb.configure(style="Dark.TCombobox")
         tk.Label(f, text="Stage:", font=("Segoe UI", 9, "bold"),
                  bg=C["bg"], fg=C["sub"]).pack(side="left", padx=(16, 0))
-        self.stage_var = tk.StringVar(value=job["stage"])
-        ttk.Combobox(f, textvariable=self.stage_var, values=STAGE_OPTIONS,
-                     width=26, font=("Segoe UI", 9), state="readonly").pack(side="left", padx=8)
+        self.stage_var = tk.StringVar(value=job.get("stage", "Applied"))
+        _st_cb = ttk.Combobox(f, textvariable=self.stage_var, values=STAGE_OPTIONS,
+                     width=26, font=("Segoe UI", 9), state="readonly")
+        _st_cb.pack(side="left", padx=8)
+        _st_cb.configure(style="Dark.TCombobox")
+
 
     def _build_oa_tab(self, tab, job):
         self._section(tab, "Online Assessment / Test Details")
@@ -299,6 +365,21 @@ class JobDetailWindow(tk.Toplevel):
                      wraplength=480, justify="left").pack(anchor="w")
             Btn(lf, "🔗 Open Assessment Link", cmd=lambda u=url: webbrowser.open(u),
                 bg=C["teal"], fg=C["bg"], w=200, h=28, fs=9).pack(anchor="w", pady=6)
+
+        # ── Calendar button ───────────────────────────────────────────────
+        cal_f = tk.Frame(tab, bg=C["bg"]); cal_f.pack(fill="x", padx=20, pady=(0, 8))
+        self._oa_cal_status = tk.StringVar(value="")
+        already = bool(job.get("oa_calendar_event_id"))
+        cal_lbl_text = "📅 Update in Calendar" if already else "📅 Add Deadline to Calendar"
+        Btn(cal_f, cal_lbl_text,
+            cmd=lambda: self._add_oa_calendar(job),
+            bg=C["card2"], fg=C["text"], w=210, h=28, fs=9).pack(side="left")
+        if already:
+            Btn(cal_f, "🗑 Remove from Calendar",
+                cmd=lambda: self._remove_oa_calendar(job),
+                bg=C["card2"], fg=C["red"], w=185, h=28, fs=9).pack(side="left", padx=8)
+        tk.Label(cal_f, textvariable=self._oa_cal_status,
+                 font=("Segoe UI", 8), bg=C["bg"], fg=C["green"]).pack(side="left", padx=8)
 
         self._section(tab, "Edit OA Info")
         ef = tk.Frame(tab, bg=C["bg"]); ef.pack(fill="x", padx=20)
@@ -357,6 +438,21 @@ class JobDetailWindow(tk.Toplevel):
                      wraplength=480, justify="left").pack(anchor="w")
             Btn(lf, "🎤 Join Meeting", cmd=lambda u=url: webbrowser.open(u),
                 bg=C["accent"], fg=C["bg"], w=160, h=28, fs=9).pack(anchor="w", pady=6)
+
+        # ── Calendar button ───────────────────────────────────────────────
+        ical_f = tk.Frame(tab, bg=C["bg"]); ical_f.pack(fill="x", padx=20, pady=(0, 8))
+        self._int_cal_status = tk.StringVar(value="")
+        already_int = bool(job.get("interview_calendar_event_id"))
+        int_lbl = "📅 Update in Calendar" if already_int else "📅 Add Interview to Calendar"
+        Btn(ical_f, int_lbl,
+            cmd=lambda: self._add_interview_calendar(job),
+            bg=C["card2"], fg=C["text"], w=210, h=28, fs=9).pack(side="left")
+        if already_int:
+            Btn(ical_f, "🗑 Remove from Calendar",
+                cmd=lambda: self._remove_interview_calendar(job),
+                bg=C["card2"], fg=C["red"], w=185, h=28, fs=9).pack(side="left", padx=8)
+        tk.Label(ical_f, textvariable=self._int_cal_status,
+                 font=("Segoe UI", 8), bg=C["bg"], fg=C["green"]).pack(side="left", padx=8)
 
         self._section(tab, "Edit Interview Info")
         ef = tk.Frame(tab, bg=C["bg"]); ef.pack(fill="x", padx=20)
@@ -686,6 +782,106 @@ class JobDetailWindow(tk.Toplevel):
                          font=("Segoe UI", 8, "bold"),
                          bg=C["card"], fg=C["yellow"]).pack(anchor="w")
 
+    def _add_oa_calendar(self, job):
+        """Add OA deadline to Google Calendar in a background thread."""
+        # Reload latest job data (user may have just edited the deadline)
+        latest = db.get_job_by_id(self.job_id)
+        self._oa_cal_status.set("⏳ Adding…")
+        def run():
+            try:
+                import calendar_helper
+                # Check if calendar scope is authorised
+                if not calendar_helper.check_calendar_scope(latest.get("gmail_account","")):
+                    self.after(0, lambda: self._oa_cal_status.set(
+                        "⚠ Calendar access needed — re-authorise in Settings"))
+                    self.after(0, lambda: self._prompt_reauth(latest.get("gmail_account","")))
+                    return
+                ok, msg = calendar_helper.add_oa_to_calendar(latest)
+                color = C["green"] if ok else C["red"]
+                self.after(0, lambda: self._oa_cal_status.set(msg))
+                self.after(0, lambda: self._set_cal_status_color(
+                    self._oa_cal_status, color))
+            except Exception as e:
+                self.after(0, lambda: self._oa_cal_status.set(f"Error: {e}"))
+        threading.Thread(target=run, daemon=True).start()
+
+    def _remove_oa_calendar(self, job):
+        latest = db.get_job_by_id(self.job_id)
+        event_id = latest.get("oa_calendar_event_id", "")
+        def run():
+            try:
+                import calendar_helper
+                ok, msg = calendar_helper.delete_calendar_event(
+                    latest.get("gmail_account", ""), event_id)
+                if ok:
+                    db.update_job_status(self.job_id, oa_calendar_event_id="")
+                self.after(0, lambda: self._oa_cal_status.set(msg))
+            except Exception as e:
+                self.after(0, lambda: self._oa_cal_status.set(f"Error: {e}"))
+        threading.Thread(target=run, daemon=True).start()
+
+    def _add_interview_calendar(self, job):
+        latest = db.get_job_by_id(self.job_id)
+        self._int_cal_status.set("⏳ Adding…")
+        def run():
+            try:
+                import calendar_helper
+                if not calendar_helper.check_calendar_scope(latest.get("gmail_account","")):
+                    self.after(0, lambda: self._int_cal_status.set(
+                        "⚠ Calendar access needed — re-authorise in Settings"))
+                    self.after(0, lambda: self._prompt_reauth(latest.get("gmail_account","")))
+                    return
+                ok, msg = calendar_helper.add_interview_to_calendar(latest)
+                color = C["green"] if ok else C["red"]
+                self.after(0, lambda: self._int_cal_status.set(msg))
+            except Exception as e:
+                self.after(0, lambda: self._int_cal_status.set(f"Error: {e}"))
+        threading.Thread(target=run, daemon=True).start()
+
+    def _remove_interview_calendar(self, job):
+        latest = db.get_job_by_id(self.job_id)
+        event_id = latest.get("interview_calendar_event_id", "")
+        def run():
+            try:
+                import calendar_helper
+                ok, msg = calendar_helper.delete_calendar_event(
+                    latest.get("gmail_account", ""), event_id)
+                if ok:
+                    db.update_job_status(self.job_id, interview_calendar_event_id="")
+                self.after(0, lambda: self._int_cal_status.set(msg))
+            except Exception as e:
+                self.after(0, lambda: self._int_cal_status.set(f"Error: {e}"))
+        threading.Thread(target=run, daemon=True).start()
+
+    def _set_cal_status_color(self, var, color):
+        """Update the label color for a calendar status StringVar."""
+        # Find label by textvariable — simplest approach is just store refs
+        pass  # color feedback via text prefix ✅/❌ is sufficient
+
+    def _prompt_reauth(self, account_email):
+        """Show a dialog prompting the user to re-authorise with calendar scope."""
+        if not account_email:
+            return
+        if messagebox.askyesno(
+            "Calendar Access Required",
+            f"JobTracker needs Calendar access for {account_email}.\n\n"
+            "This requires re-authorising your Google account once.\n"
+            "A browser window will open — click Allow.\n\n"
+            "Re-authorise now?"
+        ):
+            creds_path = db.get_setting("credentials_path", "")
+            def run():
+                try:
+                    import calendar_helper
+                    ok, msg = calendar_helper.reauthorise_with_calendar(
+                        account_email, creds_path)
+                    self.after(0, lambda: messagebox.showinfo(
+                        "Re-authorisation", msg))
+                except Exception as e:
+                    self.after(0, lambda: messagebox.showerror(
+                        "Error", str(e)))
+            threading.Thread(target=run, daemon=True).start()
+
     def _save_all(self):
         db.update_job_status(
             self.job_id,
@@ -786,7 +982,8 @@ class SettingsDialog(tk.Toplevel):
         super().__init__(parent)
         self.title("Settings")
         self.configure(bg=C["bg"])
-        self.geometry("600x580")
+        self.geometry("620x700")
+        self.resizable(True, True)
         self.on_save = on_save
         self.app_ref = app_ref
         self._build()
@@ -796,7 +993,24 @@ class SettingsDialog(tk.Toplevel):
                  bg=C["bg"], fg=C["text"]).pack(pady=(18, 4))
         sep(self).pack(fill="x", padx=20)
 
-        f = tk.Frame(self, bg=C["bg"]); f.pack(fill="both", expand=True, padx=28, pady=10)
+        # Scrollable body
+        body = tk.Frame(self, bg=C["bg"])
+        body.pack(fill="both", expand=True)
+        _canvas = tk.Canvas(body, bg=C["bg"], highlightthickness=0)
+        vsb = ttk.Scrollbar(body, orient="vertical", command=_canvas.yview)
+        _canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        _canvas.pack(side="left", fill="both", expand=True)
+        inner = tk.Frame(_canvas, bg=C["bg"])
+        _win = _canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>", lambda e: _canvas.configure(scrollregion=_canvas.bbox("all")))
+        _canvas.bind("<Configure>", lambda e: _canvas.itemconfig(_win, width=e.width))
+        _canvas.bind_all("<MouseWheel>", lambda e: _canvas.yview_scroll(-1*(e.delta//120), "units"))
+        self.protocol("WM_DELETE_WINDOW",
+                      lambda: (_canvas.unbind_all("<MouseWheel>"), self.destroy()))
+
+        f = tk.Frame(inner, bg=C["bg"], padx=28, pady=10)
+        f.pack(fill="x")
 
         # credentials.json
         lbl(f, "Google OAuth credentials.json:", bold=True, color=C["sub"]).grid(
@@ -896,6 +1110,59 @@ class SettingsDialog(tk.Toplevel):
         lbl(f, "  Tip: Use 180 or 365 days on first scan to catch all past applications",
             color=C["yellow"], size=8).grid(row=16, column=0, columnspan=3, sticky="w", pady=(2,0))
 
+        sep(f, color=C["border"]).grid(row=17, column=0, columnspan=3, sticky="ew", pady=8)
+
+        # SMTP Notifications
+        lbl(f, "📧 Daily Email Notifications  (via SMTP):",
+            bold=True, color=C["sub"]).grid(row=18, column=0, columnspan=3, sticky="w", pady=(4,4))
+
+        hint_f = tk.Frame(f, bg=C["card2"], padx=10, pady=7)
+        hint_f.grid(row=19, column=0, columnspan=3, sticky="ew", pady=(0,6))
+        tk.Label(hint_f,
+                 text="Gmail users: smtp.gmail.com  port 587  + App Password\n"
+                      "(Google Account → Security → 2-Step Verification → App Passwords)",
+                 font=("Segoe UI", 8), bg=C["card2"], fg=C["dim"], justify="left").pack(anchor="w")
+
+        smtp_fields = [
+            ("Notify email (send TO):",      "smtp_to",   "",               26),
+            ("SMTP Host:",                    "smtp_host", "smtp.gmail.com", 26),
+            ("SMTP Port:",                    "smtp_port", "587",             8),
+            ("SMTP Username (your email):",   "smtp_user", "",               26),
+            ("SMTP Password / App Password:", "smtp_pass", "",               26),
+        ]
+        self._smtp_vars = {}
+        for i, (label_text, key, default, width) in enumerate(smtp_fields):
+            r = 20 + i * 2
+            lbl(f, label_text, color=C["sub"]).grid(row=r, column=0, sticky="w", pady=(4,0))
+            var = tk.StringVar(value=db.get_setting(key, default))
+            self._smtp_vars[key] = var
+            e = entry(f, var, w=width)
+            e.grid(row=r+1, column=0, columnspan=2, sticky="w")
+            if "pass" in key:
+                e.config(show="*")
+                sl = tk.Label(f, text="show", font=("Segoe UI", 8),
+                              bg=C["bg"], fg=C["accent"], cursor="hand2")
+                sl.grid(row=r+1, column=2, sticky="w", padx=6)
+                sl.bind("<Button-1>",
+                        lambda ev, en=e: en.config(show="" if en.cget("show") == "*" else "*"))
+
+        smtp_btn_f = tk.Frame(f, bg=C["bg"])
+        smtp_btn_f.grid(row=30, column=0, columnspan=3, sticky="w", pady=(10,2))
+        self._smtp_status = tk.StringVar(value="")
+        Btn(smtp_btn_f, "📧 Send Test Email", cmd=self._test_smtp,
+            bg=C["card2"], fg=C["text"], w=150, h=26, fs=9).pack(side="left", padx=(0,8))
+        Btn(smtp_btn_f, "🗓 Setup Daily Task", cmd=self._setup_task,
+            bg=C["card2"], fg=C["text"], w=150, h=26, fs=9).pack(side="left", padx=(0,8))
+        Btn(smtp_btn_f, "❌ Remove Task", cmd=self._remove_task,
+            bg=C["card2"], fg=C["text"], w=110, h=26, fs=9).pack(side="left")
+        tk.Label(f, textvariable=self._smtp_status, font=("Segoe UI", 8),
+                 bg=C["bg"], fg=C["green"]).grid(row=31, column=0, columnspan=3, sticky="w")
+        lbl(f, "  'Setup Daily Task' registers a Windows Task Scheduler job that runs\n"
+               "  daily_scan.py every day at the configured scan time.",
+            color=C["dim"], size=8).grid(row=32, column=0, columnspan=3, sticky="w", pady=(2,12))
+
+        # Fixed bottom bar
+        sep(self).pack(fill="x", padx=20)
         bf = tk.Frame(self, bg=C["bg"]); bf.pack(pady=10)
         Btn(bf, "💾 Save Settings", cmd=self._save,
             bg=C["accent"], w=140, h=30).pack(side="left", padx=6)
@@ -994,12 +1261,52 @@ class SettingsDialog(tk.Toplevel):
 
         threading.Thread(target=run, daemon=True).start()
 
+    def _test_smtp(self):
+        self._save_smtp_only()
+        self._smtp_status.set("⏳ Sending...")
+        def run():
+            try:
+                import daily_scan
+                ok, msg = daily_scan.send_notification_email(
+                    "✅ JobTracker — Test Email",
+                    "<h2 style='font-family:sans-serif'>JobTracker is connected!</h2>"
+                    "<p style='font-family:sans-serif;color:#555'>Your daily notifications are set up correctly.</p>",
+                    "JobTracker is connected! Daily notifications are working.",
+                )
+                self.after(0, lambda: self._smtp_status.set(msg))
+            except Exception as e:
+                self.after(0, lambda: self._smtp_status.set(f"Error: {e}"))
+        threading.Thread(target=run, daemon=True).start()
+
+    def _setup_task(self):
+        self._save_smtp_only()
+        scan_time = self.scan_time_var.get().strip() or "08:00"
+        try:
+            import scheduler_setup
+            ok = scheduler_setup.install_task(scan_time)
+            self._smtp_status.set(f"✅ Daily task set for {scan_time}" if ok else "❌ Task setup failed")
+        except Exception as e:
+            self._smtp_status.set(f"❌ Error: {e}")
+
+    def _remove_task(self):
+        try:
+            import scheduler_setup
+            scheduler_setup.remove_task()
+            self._smtp_status.set("✅ Scheduled task removed")
+        except Exception as e:
+            self._smtp_status.set(f"❌ {e}")
+
+    def _save_smtp_only(self):
+        for key, var in self._smtp_vars.items():
+            db.set_setting(key, var.get().strip())
+
     def _save(self):
         db.set_setting("credentials_path", self.creds_var.get().strip())
-        db.set_setting("scan_time",         self.scan_time_var.get().strip())
-        db.set_setting("days_back",         self.days_var.get().strip())
-        db.set_setting("gmail_accounts",    self.accts_txt.get("1.0","end-1c").strip())
-        db.set_setting("groq_api_key",      self.groq_var.get().strip())
+        db.set_setting("scan_time",        self.scan_time_var.get().strip())
+        db.set_setting("days_back",        self.days_var.get().strip())
+        db.set_setting("gmail_accounts",   self.accts_txt.get("1.0","end-1c").strip())
+        db.set_setting("groq_api_key",     self.groq_var.get().strip())
+        self._save_smtp_only()
         self.on_save()
         messagebox.showinfo("Saved", "Settings saved!")
         self.destroy()
@@ -1229,6 +1536,17 @@ class JobTrackerApp(tk.Tk):
                     fieldbackground=C["card2"], background=C["card2"],
                     foreground=C["text"], selectbackground=C["accent"],
                     borderwidth=0)
+        # Dark.TCombobox — explicitly forces dark text/bg for job detail dropdowns
+        s.configure("Dark.TCombobox",
+                    fieldbackground=C["card2"], background=C["card2"],
+                    foreground=C["text"], selectbackground=C["accent"],
+                    selectforeground=C["text"], insertcolor=C["text"],
+                    borderwidth=1, relief="flat")
+        s.map("Dark.TCombobox",
+              fieldbackground=[("readonly", C["card2"]), ("disabled", C["card"])],
+              foreground=[("readonly", C["text"]), ("disabled", C["dim"])],
+              selectbackground=[("readonly", C["accent"])],
+              selectforeground=[("readonly", C["bg"])])
         s.configure("Vertical.TScrollbar",
                     background=C["card2"], troughcolor=C["bg"],
                     borderwidth=0, arrowcolor=C["dim"])

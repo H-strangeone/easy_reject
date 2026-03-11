@@ -31,7 +31,10 @@ except ImportError:
 
 import database as db
 
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/calendar",
+]
 TOKEN_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -156,6 +159,76 @@ def llm_classify(subject: str, body: str):
 
 
 
+def llm_is_job_email(subject: str, body: str) -> bool | None:
+    """
+    Fast LLM spam gate: asks ONLY "is this job-related?"
+    Returns True (keep), False (skip/spam), or None (LLM unavailable → keep by default).
+    Uses a very short prompt to minimise token usage.
+    """
+    global _GROQ_LAST_CALL, _GROQ_CONSECUTIVE_429
+
+    api_key = _get_groq_key()
+    if not api_key:
+        return None   # No LLM — let keyword classifier handle it
+
+    elapsed = _time.monotonic() - _GROQ_LAST_CALL
+    if elapsed < _GROQ_MIN_INTERVAL:
+        _time.sleep(_GROQ_MIN_INTERVAL - elapsed)
+
+    # Very short preview — we just need enough to judge spam vs job email
+    preview = (subject + "\n" + body[:400]).strip()
+
+    prompt = (
+        "Is this email directly related to a job application, hiring process, "
+        "recruitment, or employment? This includes: application confirmations, "
+        "rejections, interview invites, job offers, OA/assessment invites, "
+        "referral confirmations.\n"
+        "It does NOT include: newsletters, retail promotions, blogs, "
+        "educational content, shopping, social media, unsubscribe emails, "
+        "or anything unrelated to a specific person\'s job application.\n\n"
+        "Email subject: " + subject[:120] + "\n"
+        "Email preview: " + body[:300] + "\n\n"
+        "Reply with ONLY one word: YES or NO"
+    )
+
+    payload = json.dumps({
+        "model": GROQ_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.0,
+        "max_tokens": 5,
+    }).encode("utf-8")
+
+    hdrs = dict(GROQ_HEADERS)
+    hdrs["Authorization"] = "Bearer " + api_key
+
+    for attempt in range(2):
+        req = urllib.request.Request(
+            GROQ_API_URL, data=payload, headers=hdrs, method="POST"
+        )
+        _GROQ_LAST_CALL = _time.monotonic()
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            _GROQ_CONSECUTIVE_429 = 0
+            answer = data["choices"][0]["message"]["content"].strip().upper()
+            if "YES" in answer:
+                return True
+            if "NO" in answer:
+                return False
+            return None  # Ambiguous — keep the email
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                retry_after = e.headers.get("retry-after", None)
+                wait = float(retry_after) if retry_after else (5 * (2 ** attempt))
+                _time.sleep(wait)
+                continue
+            return None
+        except Exception:
+            return None
+
+    return None   # Exhausted retries — keep the email
+
+
 def test_groq_connection():
     """
     Quick test — call this to verify the API key works.
@@ -260,6 +333,33 @@ REJECTION = [
     "we are moving forward with other applicants",
     "chosen another candidate", "selected another candidate",
     "gone with another candidate",
+    # Philips-style and similar
+    "decided not to proceed", "decided not to move forward",
+    "we are not able to move forward", "unable to move forward",
+    "we have identified candidates more closely aligned",
+    "identified candidates more closely",
+    "we won’t be moving forward",   # smart apostrophe variant
+    "we will not be proceeding", "we are not proceeding",
+    "your application has been unsuccessful",
+    "no longer wish to proceed", "not shortlisting",
+    "after reviewing your application, we",
+    "we have reviewed your application and",
+    "not in a position to offer", "not in a position to move",
+    "appreciate your interest but", "thank you for your interest, however",
+    "thank you for your interest but",
+    "we are not moving forward", "not be moving forward with",
+    "we will be moving forward with other",
+    "at this time we will not", "at this time, we will not",
+    "regret to let you know", "sorry to inform you",
+    "we’re sorry to inform", "we’re unable to move",
+    "we’re not able to move forward",
+    # JPMorgan / Oracle ATS style
+    "sorry to let you know", "we're sorry to let you know",
+    "we’re sorry to let you know",
+    "at this time we're moving forward with other",
+    "at this time we’re moving forward with other",
+    "moving forward with other candidates",
+    "we're moving forward with other", "we’re moving forward with other",
 ]
 
 ACCEPTANCE_NEXT_STEP = [
@@ -671,9 +771,14 @@ def classify_email(subject, body):
         result["interview_details"] = " | ".join(int_details)
 
     # --- Rejection ---
+    # Normalize smart/curly quotes so "won't" matches "won’t" etc.
+    combined_lower_norm = (combined_lower
+        .replace("’", "'").replace("‘", "'")
+        .replace("“", '"').replace("”", '"')
+        .replace("–", "-").replace("—", "-"))
     # Be careful: "unfortunately" alone can be a false positive.
     # Require at least one strong rejection signal OR multiple weak ones.
-    rejection_hits = [kw for kw in REJECTION if kw in combined_lower]
+    rejection_hits = [kw for kw in REJECTION if kw in combined_lower_norm]
     is_rejection = False
     if len(rejection_hits) >= 2:
         is_rejection = True
@@ -689,14 +794,23 @@ def classify_email(subject, body):
             "no longer considering your application",
             "not be proceeding with your application",
             "we have decided not to proceed", "we won't be moving forward",
+            "decided not to proceed", "decided not to move forward",
+            "we have identified candidates more closely",
             "not shortlisted", "unsuccessful in your application",
             "we are unable to offer", "we cannot offer you",
             "your application was not successful",
             "we will not be moving forward with your application",
             "we have chosen to move forward with another candidate",
             "we are moving forward with other applicants",
+            "we are not moving forward", "not be moving forward with",
+            "we will be moving forward with other",
+            "regret to let you know", "sorry to inform you",
+            "your application has been unsuccessful",
+            "sorry to let you know", "we're sorry to let you know",
+            "moving forward with other candidates",
+            "we're moving forward with other",
         ]
-        if rejection_hits[0] in strong_rejection:
+        if rejection_hits[0] in strong_rejection or any(s in combined_lower_norm for s in strong_rejection):
             is_rejection = True
 
     if is_rejection:
@@ -744,9 +858,12 @@ def extract_company_from_email(sender_full, subject, body):
         "recruiting", "careers", "jobs", "apply", "notifications",
         "noreply", "no-reply", "donotreply",
         "gmail", "yahoo", "outlook", "hotmail", "live", "icloud",
-        "mail", "email", "support", "hello", "info", "contact",
-        "talentreef", "successfactors", "oracle", "sap", "cornerstoneondemand",
+        "email", "support", "hello", "info", "contact",
+        "talentreef", "cornerstoneondemand",
         "kenexa", "silkroad", "lumesse", "brassring", "peoplefluent",
+        # NOTE: oracle, successfactors, sap are ATS platforms used by real companies
+        # (JPMorgan uses Oracle Taleo, Siemens uses SAP SuccessFactors, etc.)
+        # DO NOT add them to SKIP_SENDERS
     }
 
     # Words that alone are not a company name
@@ -965,11 +1082,56 @@ def scan_account(account_email, credentials_path, days_back=7,
     if not GOOGLE_LIBS_AVAILABLE:
         raise ImportError("Google libraries not installed.")
 
-    # ── Senders/domains to always skip ───────────────────────────────────
+    # ── Senders/domains/display-names to ALWAYS skip ─────────────────────
+    # These are job boards, newsletters, coding platforms — not real applications
     SKIP_SENDERS = {
-        "unstop", "unstop.com", "dare2compete",
-        "naukri", "naukrinewsletter", "shine", "monster",
-        "foundit", "timesjobs", "freshersworld",
+        # Unstop / Dare2Compete
+        "unstop", "unstop.com", "dare2compete", "dare2compete.com",
+        "team unstop", "jia from unstop", "hi@unstop", "noreply@unstop",
+        # Naukri family
+        "naukri", "naukri.com", "naukrinewsletter", "naukri campus",
+        "naukri campus jobs", "info@naukri", "newsletter@naukri",
+        # Internshala
+        "internshala", "internshala.com", "internshala jobs",
+        "team@internshala", "noreply@internshala",
+        # GeeksForGeeks / Coding Ninjas / CodeChef
+        "geeksforgeeks", "geeksforgeeks.org", "gfg",
+        "codingninjas", "coding ninjas", "codingninjas.com",
+        "codechef", "codechef.com",
+        # LeetCode
+        "leetcode", "leetcode.com", "do-not-reply@leetcode",
+        # Reddit
+        "reddit", "reddit.com", "noreply@reddit",
+        # Medium
+        "medium", "medium.com", "noreply@medium",
+        "medium daily digest", "dailydigest@medium",
+        # Shine / Monster / Foundit / TimesJobs / Freshersworld
+        "shine", "shine.com", "monster", "monster.com",
+        "foundit", "foundit.in", "timesjobs", "timesjobs.com",
+        "freshersworld", "freshersworld.com",
+        # Cutshort / Apna / Hirect / Hirist
+        "cutshort", "cutshort.io", "apna", "apna.co",
+        "hirect", "hirect.in", "hirist", "hirist.com",
+        # HackerEarth (newsletters, not OA invites from companies)
+        "hackerearth newsletter", "news@hackerearth",
+        # Other generic job boards / spam
+        "iimjobs", "iimjobs.com", "updazz", "updazz.com",
+        "careerjet", "careerjet.com", "simplyhired", "simplyhired.com",
+        "glassdoor newsletter", "newsletter@glassdoor",
+        "linkedin job alert", "jobalert@linkedin",
+        "indeed newsletter", "alert@indeed",
+        # Newsletters / blogs / non-job spam
+        "clearerthinking", "clearerthinking.org", "newsletter@clearerthinking",
+        "puma", "no-reply@email-in.puma.com", "puma.com",
+        "unsubscribe" ,  # marketing emails with unsubscribe footers handled separately
+        # Shopping / retail / lifestyle brands
+        "nike", "adidas", "amazon", "flipkart", "myntra", "ajio",
+        "zomato", "swiggy", "blinkit", "zepto", "bigbasket",
+        "meesho", "nykaa", "snapdeal", "paytm", "phonepe",
+        # Tech newsletters / blogs (not job boards)
+        "substack", "beehiiv", "convertkit", "mailchimp",
+        "hackernewsletter", "tldr.tech", "bytebytego",
+        "quora digest", "quora", "stackoverflow newsletter",
     }
 
     # ── Keywords that mean "job posting / newsletter" not an application ──
@@ -996,7 +1158,7 @@ def scan_account(account_email, credentials_path, days_back=7,
     if scan_mode == "applied":
         # Focused: only emails that look like responses to applications
         search_queries = [
-            f"subject:(application OR applied OR interview OR assessment OR offer OR rejected OR \"thank you\") after:{after_date}",
+            f"subject:(application OR applied OR interview OR assessment OR offer OR rejected OR \"thank you\" OR \"application status\" OR \"job application\") after:{after_date}",
             f"from:(noreply OR no-reply OR careers OR jobs OR recruiting OR hr OR talent) after:{after_date}",
             f"(hackerrank OR codility OR hirevue OR mettl OR codesignal OR testgorilla OR coderbyte) after:{after_date}",
             f"(\"your cv was sent\" OR \"your application was sent\" OR \"thank you for your interest\" OR \"we will review your application\" OR \"thank you for applying\" OR \"thank you for your application\") after:{after_date}",
@@ -1005,7 +1167,7 @@ def scan_account(account_email, credentials_path, days_back=7,
     else:
         # All: include job opportunity / newsletter emails too
         search_queries = [
-            f"subject:(application OR applied OR interview OR assessment OR offer OR rejected OR hiring OR recruiter OR referral OR referred OR test OR challenge OR \"thank you\" OR \"is hiring\" OR \"job alert\" OR \"jobs matching\") after:{after_date}",
+            f"subject:(application OR applied OR interview OR assessment OR offer OR rejected OR hiring OR recruiter OR referral OR referred OR test OR challenge OR \"thank you\" OR \"is hiring\" OR \"job alert\" OR \"jobs matching\" OR \"application status\" OR \"job application\") after:{after_date}",
             f"from:(noreply OR no-reply OR careers OR jobs OR recruiting OR hr OR talent OR assessment OR test OR opportunities) after:{after_date}",
             f"(hackerrank OR codility OR hirevue OR mettl OR codesignal OR testgorilla OR coderbyte) after:{after_date}",
             f"(\"your cv was sent\" OR \"your application was sent\" OR \"thank you for your interest\" OR \"we will review your application\" OR \"thank you for applying\") after:{after_date}",
@@ -1033,8 +1195,23 @@ def scan_account(account_email, credentials_path, days_back=7,
             if msg_id in seen_msg_ids:
                 continue
             seen_msg_ids.add(msg_id)
-            emails_scanned += 1
 
+            # Skip if already fully processed in a previous scan
+            # EXCEPT: if the email event exists but job is still Applied/In Progress,
+            # reprocess it — previous scan may have misclassified it
+            if db.message_id_processed(msg_id):
+                # Check if this might be a misclassified rejection we should recheck
+                existing_id = db.thread_id_exists(thread_id)
+                if existing_id:
+                    job_check = db.get_job_by_id(existing_id)
+                    if job_check and job_check.get("status") in ("Applied", "In Progress"):
+                        pass  # fall through and reprocess
+                    else:
+                        continue  # already correctly classified, skip
+                else:
+                    continue  # no matching job, skip
+
+            emails_scanned += 1
             if progress_callback:
                 progress_callback(f"Reading email {emails_scanned}…")
 
@@ -1062,6 +1239,20 @@ def scan_account(account_email, credentials_path, days_back=7,
             if any(skip in sender_lower for skip in SKIP_SENDERS):
                 if progress_callback:
                     progress_callback(f"  ⏭ Skipped (blocked sender): {sender[:50]}")
+                continue
+
+            # ── Skip retail/marketing emails by body content ─────────────
+            # If email has "unsubscribe" but zero job-context words, skip it
+            body_job_words = [
+                "application", "applied", "interview", "offer", "assessment",
+                "position", "role", "candidacy", "hiring", "recruiter",
+                "candidate", "shortlist", "selection", "vacancy",
+            ]
+            combined_quick = (subject + " " + body[:600]).lower()
+            if ("unsubscribe" in combined_quick and
+                    not any(w in combined_quick for w in body_job_words)):
+                if progress_callback:
+                    progress_callback(f"  ⏭ Skipped (marketing/retail): {sender[:50]}")
                 continue
 
             # ── Detect job opportunity emails ────────────────────────────
@@ -1106,14 +1297,44 @@ def scan_account(account_email, credentials_path, days_back=7,
             email_date = (datetime.fromtimestamp(internal_date).strftime("%d-%m-%Y")
                           if internal_date else datetime.now().strftime("%d-%m-%Y"))
 
+            # ── LLM spam gate ────────────────────────────────────────────────
+            # Keyword classifier can misfire on newsletters/retail emails that
+            # happen to contain words like "unfortunately" or job-adjacent links.
+            # We only run the LLM gate on emails that look SUSPICIOUS — i.e. the
+            # subject doesn't already contain clear job-application signals.
+            # This avoids wasting rate-limit quota on obvious job emails.
+            if _get_groq_key():
+                _subj_low = subject.lower()
+                _clear_job_signals = [
+                    "your application", "thank you for applying", "application received",
+                    "application for", "we received your application",
+                    "application status", "job application status",
+                    "your job application",
+                    "interview", "assessment", "online test", "hackerrank", "codility",
+                    "job offer", "offer of employment", "congratulations",
+                    "we are pleased", "moving forward", "next steps",
+                    "shortlisted", "selected for",
+                ]
+                _looks_obviously_job = any(s in _subj_low for s in _clear_job_signals)
+
+                # Only call LLM gate when the subject is ambiguous/unclear
+                if not _looks_obviously_job:
+                    is_job = llm_is_job_email(subject, body)
+                    if is_job is False:
+                        if progress_callback:
+                            progress_callback(f"  ⏭ LLM: not job-related, skipping: {subject[:55]}")
+                        continue
+                    # is_job=True or None (LLM unavailable/rate-limited) → keep
+
             # ── Rule-based classification ───────────────────────────────
             clf = classify_email(subject, body)
 
-            # ── LLM classification (Groq, free tier) — enhances/overrides rules ──
-            llm = llm_classify(subject, body)
-            if llm and llm.get("is_job_email") is False:
-                # LLM says this is NOT a job email — skip entirely
-                continue
+            # ── Full LLM classification — ONLY when keywords couldn't decide ──
+            llm = None
+            if clf["type"] == "unknown" and _get_groq_key():
+                llm = llm_classify(subject, body)
+                if llm and llm.get("is_job_email") is False:
+                    continue
 
             if llm:
                 # Map LLM classification to our internal type/stage
@@ -1164,28 +1385,53 @@ def scan_account(account_email, credentials_path, days_back=7,
                 else company_from_header
             )
 
+            # ── Match to existing job: thread first, then company name ────
             existing_job_id = db.thread_id_exists(thread_id)
+            matched_by = "thread"
+
+            if not existing_job_id and resolved_company:
+                # Fallback: match by company name for the same Gmail account.
+                # This handles rejection/update emails that arrive in a different
+                # thread than the original application (very common with ATS systems).
+                existing_job_id = db.find_job_by_company(resolved_company, account_email)
+                if existing_job_id:
+                    matched_by = "company"
+                    # Update the thread_id so future emails match correctly
+                    db.update_job_status(existing_job_id)  # touch last_updated
+
+            status_map = {
+                "rejected":          "Rejected",
+                "offer":             "Offer Received",
+                "accepted":          "In Progress",
+                "oa":                "In Progress",
+                "interview":         "In Progress",
+                "application_sent":  "Applied",
+                "referral":          "Applied",
+                "moving_forward":    "In Progress",
+            }
+            stage_map = {
+                "rejected":         "Rejected",
+                "offer":            "Offer Received",
+                "accepted":         "Moving Forward",
+                "application_sent": "Applied - Waiting",
+            }
 
             if existing_job_id:
                 # ── Update existing record ──────────────────────────────
-                status_map = {
-                    "rejected":          "Rejected",
-                    "offer":             "Offer Received",
-                    "accepted":          "In Progress",
-                    "oa":                "In Progress",
-                    "interview":         "In Progress",
-                    "application_sent":  "Applied",
-                    "referral":          "Applied",
-                    "moving_forward":    "In Progress",
-                }
-                stage_map = {
-                    "rejected":         "Rejected",
-                    "offer":            "Offer Received",
-                    "accepted":         "Moving Forward",
-                    "application_sent": "Applied - Waiting",
-                }
                 new_status = status_map.get(clf["type"])
                 new_stage  = clf["stage"] or stage_map.get(clf["type"])
+
+                # Status priority: never downgrade a Rejected/Offer back to Applied
+                if new_status:
+                    existing = db.get_job_by_id(existing_job_id)
+                    current_status = existing.get("status", "") if existing else ""
+                    DOWNGRADE_GUARD = {
+                        # current          → don't overwrite with these
+                        "Rejected":        {"Applied", "In Progress"},
+                        "Offer Received":  {"Applied", "In Progress"},
+                    }
+                    if new_status in DOWNGRADE_GUARD.get(current_status, set()):
+                        new_status = None  # keep current status
 
                 db.update_job_status(
                     existing_job_id,
@@ -1217,6 +1463,10 @@ def scan_account(account_email, credentials_path, days_back=7,
                     body_text=body[:8000],
                 )
                 updates += 1
+                if progress_callback:
+                    match_note = f" (matched by {matched_by})" if matched_by == "company" else ""
+                    status_str = new_status or new_stage or clf["type"]
+                    progress_callback(f"  🔄 Updated: {resolved_company} → {status_str}{match_note}")
 
             elif clf["type"] in ("application_sent", "referral"):
                 # ── New application ─────────────────────────────────────
@@ -1247,6 +1497,37 @@ def scan_account(account_email, credentials_path, days_back=7,
                 if clf["important_dates"]:
                     db.update_job_status(job_id, important_dates=clf["important_dates"])
                 new_apps += 1
+
+            elif clf["type"] == "rejected":
+                # ── Unmatched rejection — create new Rejected entry ─────
+                # Company sent rejection for an app we don't have tracked
+                # (e.g. applied via company website, not via Gmail)
+                role = extract_role_from_subject(subject)
+                job_id = db.add_job(
+                    company=resolved_company,
+                    role=role,
+                    gmail_account=account_email,
+                    applied_date=email_date,
+                    thread_id=thread_id,
+                    email_subject=subject,
+                )
+                db.update_job_status(job_id, status="Rejected", stage="Rejected")
+                db.add_email_event(
+                    job_id,
+                    event_type="rejected",
+                    subject=subject,
+                    snippet=snippet[:400],
+                    message_id=msg_id,
+                    event_date=email_date,
+                    extracted_links=links_str,
+                    extracted_dates=dates_str,
+                    raw_details=clf["raw_details"][:800],
+                    sender_full=sender,
+                    body_text=body[:8000],
+                )
+                new_apps += 1
+                if progress_callback:
+                    progress_callback(f"  ❌ New rejected: {resolved_company}")
 
             elif clf["type"] in ("oa", "interview", "offer", "accepted"):
                 # ── Unmatched OA / interview / offer / moving forward — create new entry ──

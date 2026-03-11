@@ -96,7 +96,8 @@ def _migrate(c):
         ("job_applications", "interview_link",       "TEXT DEFAULT ''"),
         ("job_applications", "interview_date",       "TEXT DEFAULT ''"),
         ("job_applications", "interview_details",    "TEXT DEFAULT ''"),
-        ("email_events",     "extracted_links",      "TEXT DEFAULT ''"),
+        ("job_applications", "oa_calendar_event_id",        "TEXT DEFAULT ''"),
+        ("job_applications", "interview_calendar_event_id",  "TEXT DEFAULT ''"),
         ("email_events",     "extracted_dates",      "TEXT DEFAULT ''"),
         ("email_events",     "raw_details",          "TEXT DEFAULT ''"),
         ("email_events",     "sender_full",          "TEXT DEFAULT ''"),
@@ -173,7 +174,8 @@ def update_job_status(job_id, status=None, stage=None, important_dates=None,
                       notes=None, referred_by=None, referral_date=None,
                       oa_platform=None, oa_link=None, oa_deadline=None,
                       oa_duration=None, oa_details=None,
-                      interview_link=None, interview_date=None, interview_details=None):
+                      interview_link=None, interview_date=None, interview_details=None,
+                      oa_calendar_event_id=None, interview_calendar_event_id=None):
     conn = get_connection()
     c = conn.cursor()
     now = datetime.now().strftime("%d-%m-%Y %H:%M")
@@ -188,6 +190,8 @@ def update_job_status(job_id, status=None, stage=None, important_dates=None,
         ("oa_details", oa_details),
         ("interview_link", interview_link), ("interview_date", interview_date),
         ("interview_details", interview_details),
+        ("oa_calendar_event_id",       oa_calendar_event_id),
+        ("interview_calendar_event_id", interview_calendar_event_id),
     ]
     for field, val in simple_fields:
         if val is not None:
@@ -259,6 +263,42 @@ def thread_id_exists(thread_id):
     conn = get_connection()
     c = conn.cursor()
     c.execute("SELECT id FROM job_applications WHERE thread_id = ?", (thread_id,))
+    row = c.fetchone()
+    conn.close()
+    return row["id"] if row else None
+
+
+def message_id_processed(message_id: str) -> bool:
+    """Return True if this message_id is already in email_events (already processed)."""
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT id FROM email_events WHERE message_id = ?", (message_id,))
+    row = c.fetchone()
+    conn.close()
+    return row is not None
+
+
+def find_job_by_company(company: str, gmail_account: str):
+    """
+    Find the most recent non-rejected job entry for a company+account pair.
+    Used as a fallback when thread_id doesn't match (e.g. rejection from a
+    different thread than the original application confirmation).
+    Returns job_id or None.
+    """
+    if not company or company.lower() in ("unknown", "unknown company", ""):
+        return None
+    conn = get_connection()
+    c = conn.cursor()
+    # Match company name case-insensitively, prefer most recently updated
+    # Exclude already-rejected to avoid overwriting a newer rejection with an older one
+    c.execute("""
+        SELECT id FROM job_applications
+        WHERE LOWER(company) = LOWER(?)
+          AND gmail_account = ?
+          AND status != 'Rejected'
+        ORDER BY last_updated DESC
+        LIMIT 1
+    """, (company.strip(), gmail_account))
     row = c.fetchone()
     conn.close()
     return row["id"] if row else None

@@ -1,9 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('database.py', '.'), ('gmail_scanner.py', '.')]
+datas = [('database.py', '.'), ('gmail_scanner.py', '.'), ('daily_scan.py', '.'), ('scheduler_setup.py', '.'), ('calendar_helper.py', '.')]
 binaries = []
-hiddenimports = ['google.auth', 'google.auth.transport.requests', 'google_auth_oauthlib.flow', 'googleapiclient.discovery', 'googleapiclient.errors', 'customtkinter', 'PIL']
+hiddenimports = ['google.auth', 'google.auth.transport.requests', 'google_auth_oauthlib.flow', 'googleapiclient.discovery', 'googleapiclient.errors', 'customtkinter', 'PIL', 'smtplib', 'ssl', 'email.mime.text', 'email.mime.multipart']
 tmp_ret = collect_all('customtkinter')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
