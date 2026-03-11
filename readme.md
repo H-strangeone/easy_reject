@@ -85,7 +85,7 @@ Inside the app:
 3.  Add the Gmail account(s) you want to scan
 4.  Save
 5.  Authorise them(here or anyways you have to do it later)
-6.  If you want to use llama-3.1-8b-instant for better context then put in your llm api key i was using groq so the option there is for groq you can just change it to whatever you want to use just make some changes in app.py and gmail_scanner.py for those api functions , use claude, chatgpt or whatever you like and get it fixed for yourself(optional though)
+6.  If you want to use llama-3.1-8b-instant for better context then put in your llm api key i was using groq so the option there is for groq you can just change it to whatever you want to use just make some changes in app.py and gmail_scanner.py for those api functions , use claude, chatgpt or whatever you like and get it fixed for yourself , also you can use any other model cause it had a higher rpd .( this whole step is optional though you can skip this cause on llms the call intervals are a bit timetaking so its your call)
 ------------------------------------------------------------------------
 
 ## 6. Start the First Scan
@@ -100,3 +100,4 @@ Allow Gmail **read-only access**.
 
 After that, the app will scan your emails and start tracking job
 applications.
+
